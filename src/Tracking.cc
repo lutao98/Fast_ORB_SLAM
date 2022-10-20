@@ -825,7 +825,7 @@ void Tracking::UpdateLastFrame()
     if(vDepthIdx.empty())
         return;
 
-    sort(vDepthIdx.begin(),vDepthIdx.end());
+    stable_sort(vDepthIdx.begin(),vDepthIdx.end());
 
     // We insert all close points (depth<mThDepth)
     // If less than 100 close points, we insert the 100 closest ones.
@@ -1090,7 +1090,7 @@ void Tracking::CreateNewKeyFrame()
 
         if(!vDepthIdx.empty())
         {
-            sort(vDepthIdx.begin(),vDepthIdx.end());
+            stable_sort(vDepthIdx.begin(),vDepthIdx.end());
 
             int nPoints = 0;
             for(size_t j=0; j<vDepthIdx.size();j++)
@@ -1277,6 +1277,9 @@ void Tracking::UpdateLocalKeyFrames()
         pKF->mnTrackReferenceForFrame = mCurrentFrame.mnId;
     }
 
+    sort( mvpLocalKeyFrames.begin(), mvpLocalKeyFrames.end(), 
+          [](const KeyFrame* a,const KeyFrame* b){
+            return a->mnId<b->mnId; } );
 
     // Include also some not-already-included keyframes that are neighbors to already-included keyframes
     for(vector<KeyFrame*>::const_iterator itKF=mvpLocalKeyFrames.begin(), itEndKF=mvpLocalKeyFrames.end(); itKF!=itEndKF; itKF++)

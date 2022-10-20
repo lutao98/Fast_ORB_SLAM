@@ -258,7 +258,21 @@ void MapPoint::ComputeDistinctiveDescriptors()
 
     vDescriptors.reserve(observations.size());
 
-    for(map<KeyFrame*,size_t>::iterator mit=observations.begin(), mend=observations.end(); mit!=mend; mit++)
+    std::vector<std::pair<KeyFrame*,size_t>> stable_observations;
+    for(std::pair<KeyFrame*,size_t> observation:observations){
+        stable_observations.push_back(observation);
+    }
+    stable_sort(stable_observations.begin(),stable_observations.end(),
+         [](const std::pair<KeyFrame*,size_t> a, const std::pair<KeyFrame*,size_t> b)
+         {
+             if(a.first->mnId!=b.first->mnId)
+                 return a.first->mnId<b.first->mnId;
+             else
+                 return a.second<b.second;
+         });
+
+    for(std::vector<std::pair<KeyFrame*,size_t>>::iterator mit=stable_observations.begin(), mend=stable_observations.end(); mit!=mend; mit++)
+    // for(map<KeyFrame*,size_t>::iterator mit=observations.begin(), mend=observations.end(); mit!=mend; mit++)
     {
         KeyFrame* pKF = mit->first;
 
@@ -290,7 +304,7 @@ void MapPoint::ComputeDistinctiveDescriptors()
     for(size_t i=0;i<N;i++)
     {
         vector<int> vDists(Distances[i],Distances[i]+N);
-        sort(vDists.begin(),vDists.end());
+        stable_sort(vDists.begin(),vDists.end());
         int median = vDists[0.5*(N-1)];
 
         if(median<BestMedian)

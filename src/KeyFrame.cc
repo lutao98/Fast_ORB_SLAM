@@ -143,7 +143,10 @@ void KeyFrame::UpdateBestCovisibles()
     for(map<KeyFrame*,int>::iterator mit=mConnectedKeyFrameWeights.begin(), mend=mConnectedKeyFrameWeights.end(); mit!=mend; mit++)
        vPairs.push_back(make_pair(mit->second,mit->first));
 
-    sort(vPairs.begin(),vPairs.end());
+    stable_sort(vPairs.begin(),vPairs.end(),[](const pair<int,KeyFrame*> a, const pair<int,KeyFrame*> b)
+                                            {  if(a.first!=b.first)  return a.first<b.first;
+                                               else return a.second->mnId<b.second->mnId;  });
+    // sort(vPairs.begin(),vPairs.end());
     list<KeyFrame*> lKFs;
     list<int> lWs;
     for(size_t i=0, iend=vPairs.size(); i<iend;i++)
@@ -351,7 +354,10 @@ void KeyFrame::UpdateConnections()
         pKFmax->AddConnection(this,nmax);
     }
 
-    sort(vPairs.begin(),vPairs.end());
+    stable_sort(vPairs.begin(),vPairs.end(),[](const pair<int,KeyFrame*> a, const pair<int,KeyFrame*> b)
+                                            {  if(a.first!=b.first)  return a.first<b.first;
+                                               else return a.second->mnId<b.second->mnId;  });   
+    // sort(vPairs.begin(),vPairs.end());
     list<KeyFrame*> lKFs;
     list<int> lWs;
     for(size_t i=0; i<vPairs.size();i++)
@@ -657,7 +663,7 @@ float KeyFrame::ComputeSceneMedianDepth(const int q)
         }
     }
 
-    sort(vDepths.begin(),vDepths.end());
+    stable_sort(vDepths.begin(),vDepths.end());
 
     return vDepths[(vDepths.size()-1)/q];
 }
