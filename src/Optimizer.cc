@@ -28,11 +28,19 @@
 #include "Thirdparty/g2o/g2o/solvers/linear_solver_dense.h"
 #include "Thirdparty/g2o/g2o/types/types_seven_dof_expmap.h"
 
+#include "Thirdparty/rootba/src/rootba/bal/ba_log_utils.hpp"
+#include "Thirdparty/rootba/src/rootba/bal/bal_app_options.hpp"
+#include "Thirdparty/rootba/src/rootba/bal/bal_pipeline_summary.hpp"
+#include "Thirdparty/rootba/src/rootba/cli/bal_cli_utils.hpp"
+#include "Thirdparty/rootba/src/rootba/solver/bal_bundle_adjustment.hpp"
+
+#include "Thirdparty/rootba/src/rootba/bal/bal_problem.hpp"
+
 #include<Eigen/StdVector>
 
 #include "Converter.h"
-
-#include<mutex>
+#include <unordered_map>
+#include <mutex>
 
 namespace ORB_SLAM2
 {
@@ -776,6 +784,211 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
         pMP->UpdateNormalAndDepth();
     }
 }
+
+
+void Optimizer::LocalSqrtBundleAdjustment(KeyFrame* pKF, bool *pbStopFlag, Map *pMap)
+{
+    // Local KeyFrames: First Breath Search from Current Keyframe
+    vector<KeyFrame*> lLocalKeyFrames;
+
+    lLocalKeyFrames.push_back(pKF);
+    pKF->mnBALocalForKF = pKF->mnId;
+
+    const vector<KeyFrame*> vNeighKFs = pKF->GetVectorCovisibleKeyFrames();
+    for(int i=0, iend=vNeighKFs.size(); i<iend; i++)
+    {
+        KeyFrame* pKFi = vNeighKFs[i];
+        pKFi->mnBALocalForKF = pKF->mnId;
+        if(!pKFi->isBad())
+            lLocalKeyFrames.push_back(pKFi);
+    }
+
+    // Local MapPoints seen in Local KeyFrames
+    vector<MapPoint*> lLocalMapPoints;
+    for(vector<KeyFrame*>::iterator lit=lLocalKeyFrames.begin() , lend=lLocalKeyFrames.end(); lit!=lend; lit++)
+    {
+        vector<MapPoint*> vpMPs = (*lit)->GetMapPointMatches();
+        for(vector<MapPoint*>::iterator vit=vpMPs.begin(), vend=vpMPs.end(); vit!=vend; vit++)
+        {
+            MapPoint* pMP = *vit;
+            if(pMP && !pMP->isBad())
+                if(pMP->mnBALocalForKF!=pKF->mnId && pMP->Observations()>1)
+                {
+                    int valid_obs = 0;
+                    map<KeyFrame*,size_t> observations = pMP->GetObservations();
+                    for(map<KeyFrame*,size_t>::iterator mit=observations.begin(), mend=observations.end(); mit!=mend; mit++)
+                    {
+                        KeyFrame* pKFi = mit->first;
+                        if(pKFi->mnBALocalForKF!=pKF->mnId&&!pKFi->isBad())
+                            valid_obs++;
+                    }
+
+                    if(valid_obs>1){
+                        lLocalMapPoints.push_back(pMP);
+                        pMP->mnBALocalForKF=pKF->mnId;
+                    }else{
+                        continue;
+                    }
+                }
+        }
+    }
+
+    // Fixed Keyframes. Keyframes that see Local MapPoints but that are not Local Keyframes
+    vector<KeyFrame*> lFixedCameras;
+    for(vector<MapPoint*>::iterator lit=lLocalMapPoints.begin(), lend=lLocalMapPoints.end(); lit!=lend; lit++)
+    {
+        map<KeyFrame*,size_t> observations = (*lit)->GetObservations();
+        for(map<KeyFrame*,size_t>::iterator mit=observations.begin(), mend=observations.end(); mit!=mend; mit++)
+        {
+            KeyFrame* pKFi = mit->first;
+
+            if(pKFi->mnBALocalForKF!=pKF->mnId && pKFi->mnBAFixedForKF!=pKF->mnId)
+            {                
+                pKFi->mnBAFixedForKF=pKF->mnId;
+                if(!pKFi->isBad())
+                    lFixedCameras.push_back(pKFi);
+            }
+        }
+    }
+
+    // parse cli and load config
+    rootba::BalAppOptions options;
+    rootba::BalPipelineSummary summary;
+    rootba::BalProblem<double> BA_problem;
+    // print options
+    if (options.solver.verbosity_level >= 2) {
+        std::cout << "Options:\n" << options;
+    }
+
+    BA_problem.set_quiet(false);
+
+    int num_opt_cams = lLocalKeyFrames.size();
+    int num_fix_cams = lFixedCameras.size();
+    int num_cams = num_opt_cams+num_fix_cams;
+    // int num_cams = num_opt_cams;
+    int num_lms = lLocalMapPoints.size();
+
+    BA_problem.init_problem(num_cams,num_lms);
+
+    std::unordered_map<long unsigned int, int> pKFiID2OrderingID;
+
+    // Set KeyFrame state
+    for(vector<KeyFrame*>::iterator lit=lLocalKeyFrames.begin(), lend=lLocalKeyFrames.end(); lit!=lend; lit++)
+    {
+        KeyFrame* pKFi = *lit;
+
+        int cam_ordering_idx = lit-lLocalKeyFrames.begin();
+        auto [R_cw, t] = Converter::toRotTrans(pKFi->GetPose());
+        Eigen::Vector4d intrinsics(pKFi->fx, pKFi->fy, pKFi->cx, pKFi->cy);
+
+        BA_problem.add_cam(cam_ordering_idx, R_cw, t, intrinsics);
+        if(pKFi->mnId==0){
+            BA_problem.fix_cam(cam_ordering_idx);
+        }
+
+        pKFiID2OrderingID[pKFi->mnId] = cam_ordering_idx;
+    }
+
+    // Set Fixed KeyFrame state
+    for(vector<KeyFrame*>::iterator lit=lFixedCameras.begin(), lend=lFixedCameras.end(); lit!=lend; lit++)
+    {
+        KeyFrame* pKFi = *lit;
+
+        int cam_ordering_idx = (lit-lFixedCameras.begin()) + num_opt_cams;
+        auto [R_cw, t] = Converter::toRotTrans(pKFi->GetPose());
+        Eigen::Vector4d intrinsics(pKFi->fx, pKFi->fy, pKFi->cx, pKFi->cy);
+
+        BA_problem.add_cam(cam_ordering_idx, R_cw, t, intrinsics);
+        BA_problem.fix_cam(cam_ordering_idx);
+    }
+
+    // Set MapPoint state and observations
+    for(vector<MapPoint*>::iterator lit=lLocalMapPoints.begin(), lend=lLocalMapPoints.end(); lit!=lend; lit++)
+    {
+        MapPoint* pMP = *lit;
+
+        int lm_ordering_idx = lit-lLocalMapPoints.begin();
+        Eigen::Vector3d p_w = Converter::toVector3d(pMP->GetWorldPos());
+
+        BA_problem.add_landmark(lm_ordering_idx, p_w);
+
+        const map<KeyFrame*,size_t> observations = pMP->GetObservations();
+
+        // Set edges
+        for(map<KeyFrame*,size_t>::const_iterator mit=observations.begin(), mend=observations.end(); mit!=mend; mit++)
+        {
+            KeyFrame* pKFi = mit->first;
+
+            if(!pKFi->isBad())
+            {
+                const cv::KeyPoint &kpUn = pKFi->mvKeysUn[mit->second];
+                Eigen::Vector2d obs;
+                obs << kpUn.pt.x, kpUn.pt.y;
+
+                BA_problem.set_observation(pKFiID2OrderingID[pKFi->mnId], lm_ordering_idx, obs);
+
+                // const float &invSigma2 = pKFi->mvInvLevelSigma2[kpUn.octave];
+                // e->setInformation(Eigen::Matrix2d::Identity()*invSigma2);
+
+                // g2o::RobustKernelHuber* rk = new g2o::RobustKernelHuber;
+                // e->setRobustKernel(rk);
+                // rk->setDelta(thHuberMono);
+            } 
+        }
+    }
+
+    if(pbStopFlag)
+        if(*pbStopFlag)
+            return;
+
+    // run solver
+    bundle_adjust_manual(BA_problem, options.solver, &summary.solver,
+                         &summary.timing);
+
+    // postprocess
+    // bal_problem.postprocress(options.dataset, &summary.timing);
+
+    bool bDoMore= true;
+
+    // 检查是否外部请求停止
+    if(pbStopFlag)
+        if(*pbStopFlag)
+            bDoMore = false;
+
+    vector<pair<KeyFrame*,MapPoint*> > vToErase;
+    // TODO
+
+    // Recover optimized data
+    // Keyframes
+    const rootba::BalProblem<double>::Cameras &cams = BA_problem.cameras();
+    const rootba::BalProblem<double>::Landmarks &landmarks = BA_problem.landmarks();
+
+    unique_lock<mutex> lock(pMap->mMutexMapUpdate);
+
+    for(vector<KeyFrame*>::iterator lit=lLocalKeyFrames.begin(), lend=lLocalKeyFrames.end(); lit!=lend; lit++)
+    {
+        KeyFrame* pKF = *lit;
+        int cam_ordering_idx = lit-lLocalKeyFrames.begin();
+        const rootba::BalProblem<double>::Camera &cam = cams.at(cam_ordering_idx);
+        
+        pKF->SetPose(Converter::toCvMat(cam.T_c_w.matrix()));
+    }
+    //Points
+    for(vector<MapPoint*>::iterator lit=lLocalMapPoints.begin(), lend=lLocalMapPoints.end(); lit!=lend; lit++)
+    {
+        MapPoint* pMP = *lit;
+        int lm_ordering_idx = lit-lLocalMapPoints.begin();
+        const rootba::BalProblem<double>::Landmark &lm = landmarks.at(lm_ordering_idx);
+
+        pMP->SetWorldPos(Converter::toCvMat(lm.p_w));
+        pMP->UpdateNormalAndDepth();
+    }
+    // debug
+    cv::Mat pause(200,200,CV_8UC3);
+    cv::imshow("11",pause);
+    cv::waitKey();
+}
+
 
 
 void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* pCurKF,

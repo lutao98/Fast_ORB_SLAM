@@ -148,4 +148,17 @@ std::vector<float> Converter::toQuaternion(const cv::Mat &M)
     return v;
 }
 
+std::pair<Eigen::Quaterniond,Eigen::Vector3d> Converter::toRotTrans(const cv::Mat &cvT){
+    Eigen::Matrix<double,3,3> R;
+    R << cvT.at<float>(0,0), cvT.at<float>(0,1), cvT.at<float>(0,2),
+         cvT.at<float>(1,0), cvT.at<float>(1,1), cvT.at<float>(1,2),
+         cvT.at<float>(2,0), cvT.at<float>(2,1), cvT.at<float>(2,2);
+
+    Eigen::Quaterniond q(R);
+
+    Eigen::Matrix<double,3,1> t(cvT.at<float>(0,3), cvT.at<float>(1,3), cvT.at<float>(2,3));
+
+    return std::make_pair(q,t);
+}
+
 } //namespace ORB_SLAM

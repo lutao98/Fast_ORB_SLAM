@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 3.13)
 project(ORB_SLAM2)
 
 IF(NOT CMAKE_BUILD_TYPE)
@@ -9,6 +9,8 @@ MESSAGE("Build type: " ${CMAKE_BUILD_TYPE})
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}  -Wall  -O3 -march=native ")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall   -O3 -march=native")
+
+add_definitions(-w)
 
 # Check C++11 or C++0x support
 include(CheckCXXCompilerFlag)
@@ -44,7 +46,10 @@ ${PROJECT_SOURCE_DIR}
 ${PROJECT_SOURCE_DIR}/include
 ${EIGEN3_INCLUDE_DIR}
 ${Pangolin_INCLUDE_DIRS}
+${PROJECT_SOURCE_DIR}/Thirdparty/rootba/src
 )
+
+add_subdirectory(Thirdparty/rootba)
 
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib)
 
@@ -76,6 +81,8 @@ ${EIGEN3_LIBS}
 ${Pangolin_LIBRARIES}
 ${PROJECT_SOURCE_DIR}/Thirdparty/DBoW2/lib/libDBoW2.so
 ${PROJECT_SOURCE_DIR}/Thirdparty/g2o/lib/libg2o.so
+rootba_solver
+rootba_cli
 )
 
 # Build examples
