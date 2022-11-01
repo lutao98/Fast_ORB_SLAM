@@ -77,9 +77,14 @@ void LocalMapping::Run()
             if(!CheckNewKeyFrames() && !stopRequested())
             {
                 // Local BA
-                if(mpMap->KeyFramesInMap()>2)
-                    // Optimizer::LocalBundleAdjustment(mpCurrentKeyFrame,&mbAbortBA, mpMap);
+                if(mpMap->KeyFramesInMap()>2){
+                    std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
                     Optimizer::LocalSqrtBundleAdjustment(mpCurrentKeyFrame,&mbAbortBA, mpMap);
+                    // Optimizer::LocalBundleAdjustment(mpCurrentKeyFrame,&mbAbortBA, mpMap);
+                    std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
+                    double cost_time = std::chrono::duration_cast<std::chrono::duration<double> >(t2 - t1).count();
+                    std::cout << "BundleAdjustment cost:" << cost_time << std::endl;
+                }
 
                 // Check redundant local Keyframes
                 KeyFrameCulling();
